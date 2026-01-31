@@ -1,41 +1,72 @@
-# A2A Agent Template
+# Codewalk Eval Agent (Green Agent)
 
-A minimal template for building [A2A (Agent-to-Agent)](https://a2a-protocol.org/latest/) green agents compatible with the [AgentBeats](https://agentbeats.dev) platform.
+A Green Agent that evaluates Q&A agents on their ability to answer technical questions about open-source codebases. Built for the [AgentBeats](https://agentbeats.dev) platform using the [A2A (Agent-to-Agent)](https://a2a-protocol.org/latest/) protocol.
+
+## Abstract
+
+**Codewalk Q&A Evaluator** benchmarks AI agents on their ability to answer technical questions about open-source codebases. Given a question about a repository (e.g., "How does request processing work in FastAPI?"), the evaluator sends it to a Q&A agent via the A2A protocol, then uses an LLM judge to score the response on four dimensions:
+
+1. **Architecture-Level Reasoning** (0-5) - Clear reasoning about system design, modules, architecture
+2. **Reasoning Consistency** (0-5) - Logical, coherent flow
+3. **Code Understanding Tier** (0-5) - Categorized as performance/runtime/inter-module/architectural
+4. **Grounding** (0-5) - Factual accuracy, alignment with reference answer if provided
+
+The benchmark supports multiple judge models (Gemini, GPT-4o, Claude) and enables reproducible evaluation through deterministic configurations.
+
+## How It Works
+
+```
+┌─────────────────┐     A2A Protocol      ┌─────────────────┐
+│   Eval Agent    │ ──────────────────────▶│    Q&A Agent    │
+│  (Green Agent)  │                        │ (Purple Agent)  │
+│                 │◀────────────────────── │                 │
+│  1. Send question                        │  2. Return answer
+│  3. Evaluate with LLM judge              │
+│  4. Return scores + feedback             │
+└─────────────────┘                        └─────────────────┘
+```
+
+## Evaluation Flow
+
+1. **Receive Request** - EvalRequest with Q&A agent URL, question, repo_url, optional reference_answer
+2. **Query Q&A Agent** - Send question via A2A protocol
+3. **Evaluate Response** - LLM judge scores the answer on 4 dimensions
+4. **Return Results** - Artifact with scores, feedback, and total score (average of 4 dimensions)
 
 ## Project Structure
 
 ```
 src/
 ├─ server.py      # Server setup and agent card configuration
-├─ executor.py    # A2A request handling
-├─ agent.py       # Your agent implementation goes here
-└─ messenger.py   # A2A messaging utilities
+├─ executor.py    # A2A request handling and task lifecycle
+├─ agent.py       # Core evaluation logic and LLM judge
+└─ messenger.py   # A2A messaging utilities for inter-agent communication
 tests/
-└─ test_agent.py  # Agent tests
+└─ test_agent.py  # A2A conformance tests
 Dockerfile        # Docker configuration
 pyproject.toml    # Python dependencies
-.github/
-└─ workflows/
-   └─ test-and-publish.yml # CI workflow
 ```
 
-## Getting Started
+## Supported Judge Models
 
-1. **Create your repository** - Click "Use this template" to create your own repository from [this](https://github.com/RDI-Foundation/green-agent-template) template
+| Model | Provider | API Key Env Var |
+|-------|----------|-----------------|
+| `gemini-2.5-flash` (default) | Google | `GOOGLE_API_KEY` |
+| `gemini-2.0-flash` | Google | `GOOGLE_API_KEY` |
+| `gpt-4o` | OpenAI | `OPENAI_API_KEY` |
+| `gpt-4o-mini` | OpenAI | `OPENAI_API_KEY` |
+| `claude-sonnet-4-5` | Anthropic | `ANTHROPIC_API_KEY` |
 
-2. **Implement your agent** - Add your agent logic to [`src/agent.py`](src/agent.py)
-
-3. **Configure your agent card** - Fill in your agent's metadata (name, skills, description) in [`src/server.py`](src/server.py)
-
-4. **Write your tests** - Add custom tests for your agent in [`tests/test_agent.py`](tests/test_agent.py)
-
-For a concrete example of implementing a green agent using this template, see this [draft PR](https://github.com/RDI-Foundation/green-agent-template/pull/3).
+All models use the OpenAI SDK with compatible endpoints for consistency.
 
 ## Running Locally
 
 ```bash
 # Install dependencies
 uv sync
+
+# Set API key
+export GOOGLE_API_KEY="your-api-key"
 
 # Run the server
 uv run src/server.py
@@ -45,43 +76,75 @@ uv run src/server.py
 
 ```bash
 # Build the image
-docker build -t my-agent .
+docker build -t codewalk-eval-agent .
 
 # Run the container
-docker run -p 9009:9009 my-agent
+docker run -p 9009:9009 -e GOOGLE_API_KEY="your-key" codewalk-eval-agent
 ```
 
 ## Testing
-
-Run A2A conformance tests against your agent.
 
 ```bash
 # Install test dependencies
 uv sync --extra test
 
-# Start your agent (uv or docker; see above)
+# Start your agent (see above)
 
-# Run tests against your running agent URL
+# Run A2A conformance tests
 uv run pytest --agent-url http://localhost:9009
+```
+
+## Request Format
+
+The agent expects an `EvalRequest` JSON with:
+
+```json
+{
+  "participants": {
+    "codewalk-qa-agent": "http://qa-agent-url:9010"
+  },
+  "config": {
+    "question": "How does request processing work in FastAPI?",
+    "repo_url": "https://github.com/tiangolo/fastapi",
+    "judge_model": "gemini-2.5-flash",
+    "reference_answer": "Optional reference for grounding evaluation"
+  }
+}
+```
+
+## Response Format
+
+Returns an `EvalResult` artifact:
+
+```json
+{
+  "question": "...",
+  "agent_answer": "...",
+  "repo_url": "...",
+  "total_score": 4.25,
+  "scores": {
+    "architecture_reasoning": {"score": 4, "feedback": "..."},
+    "reasoning_consistency": {"score": 5, "feedback": "..."},
+    "code_understanding_tier": {"tier": "architectural", "score": 4, "feedback": "..."},
+    "grounding": {"score": 4, "feedback": "..."}
+  }
+}
 ```
 
 ## Publishing
 
-The repository includes a GitHub Actions workflow that automatically builds, tests, and publishes a Docker image of your agent to GitHub Container Registry.
+Push to `main` to publish `latest` tag, or create a version tag (e.g., `v1.0.0`) for versioned releases:
 
-If your agent needs API keys or other secrets, add them in Settings → Secrets and variables → Actions → Repository secrets. They'll be available as environment variables during CI tests.
-
-- **Push to `main`** → publishes `latest` tag:
 ```
-ghcr.io/<your-username>/<your-repo-name>:latest
+ghcr.io/<your-username>/codewalk_eval_agent:latest
+ghcr.io/<your-username>/codewalk_eval_agent:1.0.0
 ```
 
-- **Create a git tag** (e.g. `git tag v1.0.0 && git push origin v1.0.0`) → publishes version tags:
-```
-ghcr.io/<your-username>/<your-repo-name>:1.0.0
-ghcr.io/<your-username>/<your-repo-name>:1
-```
+## Related Repositories
 
-Once the workflow completes, find your Docker image in the Packages section (right sidebar of your repository). Configure the package visibility in package settings.
+- [codewalk_qa_agent](https://github.com/CodeFusionAgent/codewalk_qa_agent) - Baseline Purple Agent for Q&A
+- [leaderboard_codewalk](https://github.com/CodeFusionAgent/leaderboard_codewalk) - Leaderboard and evaluation scenarios
 
-> **Note:** Organization repositories may need package write permissions enabled manually (Settings → Actions → General). Version tags must follow [semantic versioning](https://semver.org/) (e.g., `v1.0.0`).
+## License
+
+MIT
